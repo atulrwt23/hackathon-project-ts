@@ -1,7 +1,8 @@
 import pg from 'pg';
-import { randomBytes } from 'node:crypto';
 import { embedTexts } from './embeddings.js';
 import * as store from './store.js';
+import { getSettings } from './settings.js';
+import { loadProjectConfig, loadContextFile } from './context-parser.js';
 import type { BusinessContext, Chunk, IngestRequest, IngestResponse } from './types.js';
 
 interface ColumnRow {
@@ -19,38 +20,52 @@ interface FkRow {
 }
 
 export async function ingest(req: IngestRequest): Promise<IngestResponse> {
-  const schemaChunks = await introspectSchema(req.target_dsn);
-  const glossaryChunks = glossaryChunksOf(req.business_context);
-  const noteChunks = tableNoteChunksOf(req.business_context);
-  const exampleChunks = exampleChunksOf(req.business_context);
+  const s = getSettings();
 
-  const allChunks: Chunk[] = [...schemaChunks, ...glossaryChunks, ...noteChunks, ...exampleChunks];
+  const config = await loadProjectConfig(s.projectsDir, req.project_id);
+  const context = await loadContextFile(s.projectsDir, req.project_id);
+
+  // Allow env var to override the DSN from config.json (useful in Docker / prod)
+  const envKey = `GET_IT_PROJECT_${req.project_id.toUpperCase().replace(/-/g, '_')}_DSN`;
+  const targetDsn = process.env[envKey] ?? config.target_dsn;
+
+  const schemaChunks = await introspectSchema(targetDsn, config.schemas);
+  const glossaryChunks = glossaryChunksOf(context);
+  const noteChunks = tableNoteChunksOf(context);
+  const exampleChunks = exampleChunksOf(context);
+  const freeChunks = freeNoteChunksOf(context);
+
+  const allChunks: Chunk[] = [...schemaChunks, ...glossaryChunks, ...noteChunks, ...exampleChunks, ...freeChunks];
   if (allChunks.length === 0) {
-    throw new RangeError('Nothing to ingest: target schema is empty and no business context provided');
+    throw new RangeError('Nothing to ingest: target schema is empty and no context.md provided');
   }
 
   const embeddings = await embedTexts(allChunks.map((c) => c.content), 'document');
-  const ingestId = 'ing_' + randomBytes(9).toString('base64url');
-  await store.writeIngest(ingestId, req.target_dsn, allChunks, embeddings);
+  await store.writeProject(s.accountId, req.project_id, targetDsn, allChunks, embeddings);
 
   return {
-    ingest_id: ingestId,
+    project_id: req.project_id,
     tables_indexed: schemaChunks.length,
     glossary_terms_indexed: glossaryChunks.length,
+    table_notes_indexed: noteChunks.length,
     examples_indexed: exampleChunks.length,
+    free_notes_indexed: freeChunks.length,
   };
 }
 
-async function introspectSchema(dsn: string): Promise<Chunk[]> {
+async function introspectSchema(dsn: string, schemas?: string[]): Promise<Chunk[]> {
   const client = new pg.Client({ connectionString: dsn });
   await client.connect();
   try {
+    const useFilter = schemas && schemas.length > 0;
     const tables = await client.query<{ table_schema: string; table_name: string }>(
       `SELECT table_schema, table_name
        FROM information_schema.tables
        WHERE table_type = 'BASE TABLE'
          AND table_schema NOT IN ('pg_catalog', 'information_schema')
+         ${useFilter ? 'AND table_schema = ANY($1)' : ''}
        ORDER BY table_schema, table_name`,
+      useFilter ? [schemas] : [],
     );
 
     const chunks: Chunk[] = [];
@@ -123,5 +138,13 @@ function exampleChunksOf(ctx: BusinessContext): Chunk[] {
     kind: 'example',
     ref: null,
     content: `Q: ${e.question}\nSQL: ${e.sql}`,
+  }));
+}
+
+function freeNoteChunksOf(ctx: BusinessContext): Chunk[] {
+  return ctx.free_notes.map((n) => ({
+    kind: 'table_note',
+    ref: n.section,
+    content: `${n.section}:\n${n.content}`,
   }));
 }

@@ -4,7 +4,7 @@ import { ingest } from './ingest.js';
 import { generateSql } from './generate.js';
 import { retrieve } from './retrieve.js';
 import { executeSql } from './execute.js';
-import { getTargetDsn } from './store.js';
+import { getProjectDsn } from './store.js';
 import { validateAndCap, SQLValidationError } from './validate.js';
 import { EmbeddingProviderError } from './embeddings.js';
 import { getSettings } from './settings.js';
@@ -28,6 +28,10 @@ export function buildApp(): FastifyInstance {
         req.log.warn({ status: e.status }, 'embedding provider error');
         return reply.code(502).send({ detail: e.message });
       }
+      // Config or file-system errors (missing config.json, bad DSN, etc.)
+      if (e instanceof Error && (e.message.includes('ENOENT') || e.message.includes('JSON'))) {
+        return reply.code(400).send({ detail: `Project config error: ${e.message}` });
+      }
       throw e;
     }
   });
@@ -41,16 +45,16 @@ export function buildApp(): FastifyInstance {
     const s = getSettings();
     const started = performance.now();
 
-    const targetDsn = await getTargetDsn(body.ingest_id);
-    if (targetDsn === null) {
-      return reply.code(404).send({ detail: `unknown ingest_id: ${body.ingest_id}` });
-    }
-
+    let project_id: string;
     let rawSql: string;
     try {
-      const ctx = await retrieve(body.ingest_id, body.question);
-      rawSql = await generateSql(body.question, ctx, body.principal);
+      const retrieval = await retrieve(body.question);
+      project_id = retrieval.project_id;
+      rawSql = await generateSql(body.question, retrieval.context, body.principal);
     } catch (e) {
+      if (e instanceof Error && e.message.startsWith('No projects ingested')) {
+        return reply.code(503).send({ detail: e.message });
+      }
       if (e instanceof EmbeddingProviderError) {
         return reply.code(502).send({ detail: e.message });
       }
@@ -59,6 +63,11 @@ export function buildApp(): FastifyInstance {
         return reply.code(502).send({ detail: `anthropic: ${e.message}` });
       }
       throw e;
+    }
+
+    const targetDsn = await getProjectDsn(s.accountId, project_id);
+    if (!targetDsn) {
+      return reply.code(500).send({ detail: `No DSN found for resolved project: ${project_id}` });
     }
 
     const cap = body.max_rows ?? s.maxRows;
@@ -78,7 +87,8 @@ export function buildApp(): FastifyInstance {
 
     req.log.info(
       {
-        ingest_id: body.ingest_id,
+        account_id: s.accountId,
+        project_id,
         user_id: body.principal.user_id,
         tenant_id: body.principal.tenant_id,
         row_count: rows.length,

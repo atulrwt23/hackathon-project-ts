@@ -24,10 +24,10 @@ describe('formatContext', () => {
   test('orders sections SCHEMA, TABLE NOTES, GLOSSARY, EXAMPLES', () => {
     const out = formatContext(
       ctx({
-        schema: [{ kind: 'schema', ref: null, content: 'TABLE public.users\n  id int', metadata: {} }],
-        glossary: [{ kind: 'glossary', ref: null, content: 'MRR: monthly recurring revenue', metadata: {} }],
-        table_notes: [{ kind: 'table_note', ref: null, content: 'Note on users: flg=A is active', metadata: {} }],
-        examples: [{ kind: 'example', ref: null, content: 'Q: foo\nSQL: SELECT 1', metadata: {} }],
+        schema: [{ kind: 'schema', ref: null, content: 'TABLE public.users\n  id int', metadata: {}, project_id: 'test' }],
+        glossary: [{ kind: 'glossary', ref: null, content: 'MRR: monthly recurring revenue', metadata: {}, project_id: 'test' }],
+        table_notes: [{ kind: 'table_note', ref: null, content: 'Note on users: flg=A is active', metadata: {}, project_id: 'test' }],
+        examples: [{ kind: 'example', ref: null, content: 'Q: foo\nSQL: SELECT 1', metadata: {}, project_id: 'test' }],
       }),
     );
     expect(out.indexOf('SCHEMA:')).toBeLessThan(out.indexOf('TABLE NOTES:'));
@@ -37,7 +37,7 @@ describe('formatContext', () => {
 
   test('skips empty sections', () => {
     const out = formatContext(
-      ctx({ schema: [{ kind: 'schema', ref: null, content: 'TABLE x', metadata: {} }] }),
+      ctx({ schema: [{ kind: 'schema', ref: null, content: 'TABLE x', metadata: {}, project_id: 'test' }] }),
     );
     expect(out).toContain('SCHEMA:');
     expect(out).not.toContain('GLOSSARY:');

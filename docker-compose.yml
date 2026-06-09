@@ -1,4 +1,5 @@
 services:
+  # Metadata DB — stores embeddings and project registry for get-it
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -7,29 +8,55 @@ services:
       POSTGRES_DB: nl2sql
     ports:
       - "55433:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nl2sql"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  nl2sql:
-    build: .
-    environment:
-      NL2SQL_METADATA_DSN: postgresql://nl2sql:nl2sql@postgres:5432/nl2sql
-      NL2SQL_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      NL2SQL_VOYAGE_API_KEY: ${VOYAGE_API_KEY}
-      NL2SQL_LLM_MODEL: claude-sonnet-4-6
-      NL2SQL_EMBED_MODEL: voyage-3
-      NL2SQL_MAX_ROWS: "1000"
-      NL2SQL_STATEMENT_TIMEOUT_MS: "5000"
-    ports:
-      - "8081:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
+  # # IPL business DB — the actual database get-it will query
+  # ipl_db:
+  #   image: postgres:16
+  #   environment:
+  #     POSTGRES_USER: ipl
+  #     POSTGRES_PASSWORD: ipl
+  #     POSTGRES_DB: ipl
+  #   ports:
+  #     - "55434:5432"
+  #   volumes:
+  #     - ipl_pgdata:/var/lib/postgresql/data
+  #     - ../ipl-db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+  #     - ../ipl-db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ipl"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 10
 
-volumes:
-  pgdata:
+  # nl2sql:
+  #   build: .
+  #   environment:
+  #     GET_IT_ACCOUNT_ID: atul-test
+  #     GET_IT_PROJECTS_DIR: /app/projects
+  #     # DSN override for Docker networking (service name instead of localhost)
+  #     GET_IT_PROJECT_IPL_DSN: postgresql://ipl:ipl@ipl_db:5432/ipl
+  #     NL2SQL_METADATA_DSN: postgresql://nl2sql:nl2sql@postgres:5432/nl2sql
+  #     NL2SQL_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+  #     NL2SQL_VOYAGE_API_KEY: ${VOYAGE_API_KEY}
+  #     NL2SQL_LLM_MODEL: claude-sonnet-4-6
+  #     NL2SQL_EMBED_MODEL: voyage-3
+  #     NL2SQL_MAX_ROWS: "1000"
+  #     NL2SQL_STATEMENT_TIMEOUT_MS: "5000"
+  #   ports:
+  #     - "8081:8080"
+  #   volumes:
+  #     - ./projects:/app/projects:ro
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     ipl_db:
+  #       condition: service_healthy
+
+# volumes:
+#   pgdata:
+#   ipl_pgdata:

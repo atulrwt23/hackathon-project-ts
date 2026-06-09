@@ -1,0 +1,4 @@
+{
+  "target_dsn": "postgresql://ipl:ipl@localhost:55434/ipl",
+  "schemas": ["public"]
+}

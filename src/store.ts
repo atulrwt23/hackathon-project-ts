@@ -20,32 +20,48 @@ async function initSchema(p: pg.Pool, embedDim: number): Promise<void> {
   const client = await p.connect();
   try {
     await client.query('CREATE EXTENSION IF NOT EXISTS vector;');
+
+    // projects: one row per (account, project), holds the target DSN
     await client.query(`
-      CREATE TABLE IF NOT EXISTS ingests (
-        ingest_id     TEXT PRIMARY KEY,
-        target_dsn    TEXT NOT NULL,
-        created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+      CREATE TABLE IF NOT EXISTS projects (
+        account_id   TEXT NOT NULL,
+        project_id   TEXT NOT NULL,
+        target_dsn   TEXT NOT NULL,
+        ingested_at  TIMESTAMPTZ,
+        PRIMARY KEY (account_id, project_id)
       );
     `);
+
+    // chunks: all embedded pieces of knowledge for every project
     await client.query(`
       CREATE TABLE IF NOT EXISTS chunks (
-        id            BIGSERIAL PRIMARY KEY,
-        ingest_id     TEXT NOT NULL REFERENCES ingests(ingest_id) ON DELETE CASCADE,
-        kind          TEXT NOT NULL,
-        ref           TEXT,
-        content       TEXT NOT NULL,
-        metadata      JSONB NOT NULL DEFAULT '{}'::jsonb,
-        embedding     vector(${embedDim}) NOT NULL
+        id           BIGSERIAL PRIMARY KEY,
+        account_id   TEXT NOT NULL,
+        project_id   TEXT NOT NULL,
+        kind         TEXT NOT NULL,
+        ref          TEXT,
+        content      TEXT NOT NULL,
+        metadata     JSONB NOT NULL DEFAULT '{}'::jsonb,
+        embedding    vector(${embedDim}) NOT NULL,
+        FOREIGN KEY (account_id, project_id)
+          REFERENCES projects(account_id, project_id) ON DELETE CASCADE
       );
     `);
-    await client.query('CREATE INDEX IF NOT EXISTS chunks_ingest_kind_idx ON chunks (ingest_id, kind);');
+
+    // Primary query pattern: WHERE account_id = ? AND kind = ? ORDER BY embedding <=> ?
+    await client.query(
+      'CREATE INDEX IF NOT EXISTS chunks_account_kind_idx ON chunks (account_id, kind);',
+    );
   } finally {
     client.release();
   }
 }
 
-export async function writeIngest(
-  ingestId: string,
+// writeProject upserts the project record and atomically replaces all its chunks.
+// Calling it again is safe and idempotent (re-ingest).
+export async function writeProject(
+  accountId: string,
+  projectId: string,
   targetDsn: string,
   chunks: Chunk[],
   embeddings: number[][],
@@ -57,21 +73,31 @@ export async function writeIngest(
   const client = await p.connect();
   try {
     await client.query('BEGIN');
+
     await client.query(
-      `INSERT INTO ingests (ingest_id, target_dsn) VALUES ($1, $2)
-       ON CONFLICT (ingest_id) DO UPDATE SET target_dsn = EXCLUDED.target_dsn`,
-      [ingestId, targetDsn],
+      `INSERT INTO projects (account_id, project_id, target_dsn, ingested_at)
+       VALUES ($1, $2, $3, now())
+       ON CONFLICT (account_id, project_id)
+       DO UPDATE SET target_dsn = EXCLUDED.target_dsn, ingested_at = now()`,
+      [accountId, projectId, targetDsn],
     );
-    await client.query('DELETE FROM chunks WHERE ingest_id = $1', [ingestId]);
+
+    // Replace all chunks for this project (re-ingest is always a full refresh)
+    await client.query('DELETE FROM chunks WHERE account_id = $1 AND project_id = $2', [
+      accountId,
+      projectId,
+    ]);
+
     for (let i = 0; i < chunks.length; i++) {
       const c = chunks[i]!;
       const emb = embeddings[i]!;
       await client.query(
-        `INSERT INTO chunks (ingest_id, kind, ref, content, metadata, embedding)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6::vector)`,
-        [ingestId, c.kind, c.ref, c.content, JSON.stringify(c.metadata ?? {}), vecLiteral(emb)],
+        `INSERT INTO chunks (account_id, project_id, kind, ref, content, metadata, embedding)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::vector)`,
+        [accountId, projectId, c.kind, c.ref, c.content, JSON.stringify(c.metadata ?? {}), vecLiteral(emb)],
       );
     }
+
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK').catch(() => undefined);
@@ -81,17 +107,10 @@ export async function writeIngest(
   }
 }
 
-export async function getTargetDsn(ingestId: string): Promise<string | null> {
-  const p = await getPool();
-  const { rows } = await p.query<{ target_dsn: string }>(
-    'SELECT target_dsn FROM ingests WHERE ingest_id = $1',
-    [ingestId],
-  );
-  return rows[0]?.target_dsn ?? null;
-}
-
+// searchChunks searches across ALL projects of an account.
+// The project_id on each returned chunk tells the caller which DB to execute against.
 export async function searchChunks(
-  ingestId: string,
+  accountId: string,
   embedding: number[],
   kind: string,
   k: number,
@@ -102,22 +121,34 @@ export async function searchChunks(
     ref: string | null;
     content: string;
     metadata: Record<string, unknown>;
+    project_id: string;
     distance: number;
   }>(
-    `SELECT kind, ref, content, metadata, embedding <=> $1::vector AS distance
+    `SELECT kind, ref, content, metadata, project_id,
+            embedding <=> $1::vector AS distance
      FROM chunks
-     WHERE ingest_id = $2 AND kind = $3
+     WHERE account_id = $2 AND kind = $3
      ORDER BY embedding <=> $1::vector
      LIMIT $4`,
-    [vecLiteral(embedding), ingestId, kind, k],
+    [vecLiteral(embedding), accountId, kind, k],
   );
   return rows.map((r) => ({
     kind: r.kind,
     ref: r.ref,
     content: r.content,
     metadata: r.metadata,
+    project_id: r.project_id,
     distance: r.distance,
   }));
+}
+
+export async function getProjectDsn(accountId: string, projectId: string): Promise<string | null> {
+  const p = await getPool();
+  const { rows } = await p.query<{ target_dsn: string }>(
+    'SELECT target_dsn FROM projects WHERE account_id = $1 AND project_id = $2',
+    [accountId, projectId],
+  );
+  return rows[0]?.target_dsn ?? null;
 }
 
 function vecLiteral(v: number[]): string {
