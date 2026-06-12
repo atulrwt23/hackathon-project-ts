@@ -1,0 +1,8 @@
+{
+  "repo_path": "/tmp/sample-ecommerce",
+  "target_dsn": "postgresql://siddique_p_s@localhost:5432/ecommerce_demo",
+  "schema_filter": [
+    "public"
+  ],
+  "last_ingest_id": "ing_i5kCsUfPvU7A"
+}

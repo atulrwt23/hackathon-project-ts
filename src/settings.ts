@@ -14,9 +14,16 @@ export interface Settings {
 
 let cached: Settings | null = null;
 
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing required env var: ${name}`);
+function pickEnv(...names: string[]): string | undefined {
+  for (const name of names) {
+    const v = process.env[name];
+    if (v) return v;
+  }
+}
+
+function requireEnvAny(...names: string[]): string {
+  const v = pickEnv(...names);
+  if (!v) throw new Error(`Missing required env var — set one of: ${names.join(', ')}`);
   return v;
 }
 
@@ -31,11 +38,11 @@ function envInt(name: string, fallback: number): number {
 export function getSettings(): Settings {
   if (cached) return cached;
   cached = {
-    metadataDsn: requireEnv('NL2SQL_METADATA_DSN'),
-    anthropicApiKey: requireEnv('NL2SQL_ANTHROPIC_API_KEY'),
-    voyageApiKey: requireEnv('NL2SQL_VOYAGE_API_KEY'),
-    llmModel: process.env.NL2SQL_LLM_MODEL ?? 'claude-sonnet-4-6',
-    embedModel: process.env.NL2SQL_EMBED_MODEL ?? 'voyage-3',
+    metadataDsn: requireEnvAny('BUSINESSDNA_METADATA_DSN', 'NL2SQL_METADATA_DSN'),
+    anthropicApiKey: requireEnvAny('ANTHROPIC_API_KEY', 'BUSINESSDNA_ANTHROPIC_KEY', 'NL2SQL_ANTHROPIC_API_KEY'),
+    voyageApiKey: requireEnvAny('VOYAGE_API_KEY', 'BUSINESSDNA_VOYAGE_KEY', 'NL2SQL_VOYAGE_API_KEY'),
+    llmModel: pickEnv('NL2SQL_LLM_MODEL') ?? 'claude-sonnet-4-6',
+    embedModel: pickEnv('NL2SQL_EMBED_MODEL') ?? 'voyage-3',
     embedDim: envInt('NL2SQL_EMBED_DIM', 1024),
     maxRows: envInt('NL2SQL_MAX_ROWS', 1000),
     statementTimeoutMs: envInt('NL2SQL_STATEMENT_TIMEOUT_MS', 5000),

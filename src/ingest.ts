@@ -19,7 +19,7 @@ interface FkRow {
 }
 
 export async function ingest(req: IngestRequest): Promise<IngestResponse> {
-  const schemaChunks = await introspectSchema(req.target_dsn);
+  const schemaChunks = await introspectSchema(req.target_dsn, req.schema_filter ?? null);
   const glossaryChunks = glossaryChunksOf(req.business_context);
   const noteChunks = tableNoteChunksOf(req.business_context);
   const exampleChunks = exampleChunksOf(req.business_context);
@@ -41,16 +41,23 @@ export async function ingest(req: IngestRequest): Promise<IngestResponse> {
   };
 }
 
-async function introspectSchema(dsn: string): Promise<Chunk[]> {
+async function introspectSchema(dsn: string, schemaFilter: string[] | null): Promise<Chunk[]> {
   const client = new pg.Client({ connectionString: dsn });
   await client.connect();
   try {
     const tables = await client.query<{ table_schema: string; table_name: string }>(
-      `SELECT table_schema, table_name
-       FROM information_schema.tables
-       WHERE table_type = 'BASE TABLE'
-         AND table_schema NOT IN ('pg_catalog', 'information_schema')
-       ORDER BY table_schema, table_name`,
+      schemaFilter && schemaFilter.length > 0
+        ? `SELECT table_schema, table_name
+           FROM information_schema.tables
+           WHERE table_type = 'BASE TABLE'
+             AND table_schema = ANY($1)
+           ORDER BY table_schema, table_name`
+        : `SELECT table_schema, table_name
+           FROM information_schema.tables
+           WHERE table_type = 'BASE TABLE'
+             AND table_schema NOT IN ('pg_catalog', 'information_schema')
+           ORDER BY table_schema, table_name`,
+      schemaFilter && schemaFilter.length > 0 ? [schemaFilter] : [],
     );
 
     const chunks: Chunk[] = [];

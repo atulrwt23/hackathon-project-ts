@@ -28,7 +28,27 @@ export type BusinessContext = z.infer<typeof BusinessContext>;
 export const IngestRequest = z.object({
   target_dsn: z.string(),
   business_context: BusinessContext.default({ glossary: [], table_notes: [], examples: [] }),
+  // Optional list of DB schemas to introspect. null = all non-system schemas.
+  schema_filter: z.array(z.string()).nullable().default(null),
 });
+
+export const ScanRequest = z.object({
+  repo_path: z.string().min(1),
+  target_dsn: z.string().min(1),
+  // Optional: restrict schema introspection to these DB schemas (e.g. ["public"]).
+  // Defaults to ["public"] to avoid indexing unrelated schemas in shared databases.
+  schema_filter: z.array(z.string()).default(['public']),
+});
+export type ScanRequest = z.infer<typeof ScanRequest>;
+
+export const ScanResponse = z.object({
+  ingest_id: z.string(),
+  files_scanned: z.number(),
+  concepts_found: z.number(),
+  tables_indexed: z.number(),
+  glossary_terms: z.number(),
+});
+export type ScanResponse = z.infer<typeof ScanResponse>;
 export type IngestRequest = z.infer<typeof IngestRequest>;
 
 export const IngestResponse = z.object({

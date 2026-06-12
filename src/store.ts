@@ -120,6 +120,31 @@ export async function searchChunks(
   }));
 }
 
+export async function listChunksByKind(
+  ingestId: string,
+  kind: string,
+): Promise<RetrievedChunk[]> {
+  const p = await getPool();
+  const { rows } = await p.query<{
+    kind: string;
+    ref: string | null;
+    content: string;
+    metadata: Record<string, unknown>;
+  }>(
+    `SELECT kind, ref, content, metadata
+     FROM chunks
+     WHERE ingest_id = $1 AND kind = $2
+     ORDER BY id`,
+    [ingestId, kind],
+  );
+  return rows.map(r => ({
+    kind: r.kind,
+    ref: r.ref,
+    content: r.content,
+    metadata: r.metadata,
+  }));
+}
+
 function vecLiteral(v: number[]): string {
   return '[' + v.map((x) => x.toFixed(7)).join(',') + ']';
 }

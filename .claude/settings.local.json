@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node *)",
+      "Bash(docker exec *)",
+      "Bash(npm run *)",
+      "Bash(echo \"frontend pid: $!\")",
+      "Read(//tmp/**)",
+      "Bash(npm install *)",
+      "Bash(chmod +x bin/businessdna.js)",
+      "Bash(kill %1)",
+      "Bash(wait %1)",
+      "Bash(psql *)"
+    ]
+  }
+}
