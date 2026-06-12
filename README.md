@@ -445,3 +445,4 @@ hackathon/
 |---|---|
 | `npm run schema` | Apply `schema.sql` to the IPL database |
 | `npm run seed` | Load all match JSON files from `../data/` |
+# hackathon-project
